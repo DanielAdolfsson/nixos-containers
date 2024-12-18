@@ -5,9 +5,10 @@ This repository provides a modified version of the nixos-containers that makes u
 
 ## Differences
 
-* `nix-store-fs` is used to mount `/nix/store`.
-* Other mounts in `/nix`, such as `db` and `daemon-socket` has been removed to further isolate `/nix`. 
+* `nix-store-fs` is used to mount `/nix/store` [privateStore].
+* Other mounts in `/nix`, such as `db` and `daemon-socket` has been removed to further isolate `/nix` [privateStore]. 
 * The container service is allowed access to `/dev/fuse rw`.
+* Two new container options `privateUsers` and `privateStore`.
 * Source has been formatted with `nix-fmt`.
 
 ## How to use
@@ -18,7 +19,16 @@ This repository provides a modified version of the nixos-containers that makes u
   imports = [
     ./nixos-containers.nix
   ];
+
+  container.my = {
+    privateStore = true;
+  };
 ```
+
+## privateUsers
+
+The new `privateUsers` option turns on user namespaces.
+It's the same as passing `-U` to `systemd-nspawn`.
 
 ## Important
 

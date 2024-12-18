@@ -13,11 +13,21 @@ This repository provides a modified version of the nixos-containers that makes u
 
 ## How to use
 
+Since this is a modified version of the original `nixos-containers`, you need
+to disable that module and then add this version to `imports`.
+
+Like so:
+
 ```
   disabledModules = [ "virtualisation/nixos-containers.nix" ];
 
   imports = [
-    ./nixos-containers.nix
+    "${
+      builtins.fetchTarball {
+        url = "https://github.com/DanielAdolfsson/nixos-containers/archive/refs/tags/v0.1.0-test.tar.gz";
+        sha256 = "sha256:04250jimflzjbhb4d9cybz4hmm27vxc0ry5bq1mv8xxfp95nysi1";
+      }
+    }/nixos-containers.nix"
   ];
 
   container.my = {

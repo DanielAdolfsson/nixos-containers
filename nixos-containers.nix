@@ -194,7 +194,7 @@ let
              --bind-ro=/nix/var/nix/db                 \
              --bind-ro=/nix/var/nix/daemon-socket      \
              --bind="/nix/var/nix/profiles/per-container/$INSTANCE:/nix/var/nix/profiles" \
-             --bind="/nix/var/nix/gcroots/per-container/$INSTANCE:/nix/var/nix/gcroots" \            
+             --bind="/nix/var/nix/gcroots/per-container/$INSTANCE:/nix/var/nix/gcroots" \
         ''
       } \
       ${optionalString (!cfg.ephemeral) "--link-journal=try-guest"} \
@@ -1004,7 +1004,7 @@ in
                     );
                   environment.root =
                     if containerConfig.ephemeral then "/run/nixos-containers/%i" else "${stateDirectory}/%i";
-                  requires = if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else null;
+                  requires = if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else [ ];
                 }
                 // (optionalAttrs containerConfig.autoStart {
                   wantedBy = [ "machines.target" ];
@@ -1012,7 +1012,7 @@ in
                   after =
                     [ "network.target" ]
                     ++ (map (i: "sys-subsystem-net-devices-${i}.device") cfg.interfaces)
-                    ++ (if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else null);
+                    ++ (if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else [ ]);
                   restartTriggers = [
                     containerConfig.path
                     config.environment.etc."${configurationDirectoryName}/${name}.conf".source

@@ -27,8 +27,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "DanielAdolfsson";
       repo = "nix-store-fs";
-      rev = "01d304a7c56f37a5a70c56b1c8ff3be9631160a9";
-      hash = "sha256-sMYYF5gja3AY/cx2M1N3ip/dflXtJUXOkkRuTOH8Ecc=";
+      rev = "4b70126f554c162c5da1f6b960f3224ffc01f89a";
+      hash = "sha256-4AE3QapRwmPCncQnJn/bfP9W4/t0D/qQKCu0AHRTf9I=";
     };
   };
 
@@ -106,10 +106,6 @@ let
     # Declare root explicitly to avoid shellcheck warnings, it comes from the env
     declare root
 
-    PATH="$PATH:${pkgs.fuse}/bin"
-    mkdir -p "/nix/var/nix/store-fs/$INSTANCE"
-    ${nix-store-fs}/bin/nix-store-fs `echo "$SYSTEM_PATH" | sed 's,.*/,,'` "/nix/var/nix/store-fs/$INSTANCE" &
-
     mkdir -p "$root/etc" "$root/var/lib"
     chmod 0755 "$root/etc" "$root/var/lib"
     mkdir -p "$root/var/lib/private" "$root/root" /run/nixos-containers
@@ -184,12 +180,23 @@ let
     # TODO: fix shellcheck issue properly
     # shellcheck disable=SC2086
     exec ${config.systemd.package}/bin/systemd-nspawn \
+      ${optionalString cfg.privateUsers "-U"} \
       --keep-unit \
       -M "$INSTANCE" -D "$root" "''${extraFlags[@]}" \
       $EXTRA_NSPAWN_FLAGS \
       --notify-ready=yes \
       --kill-signal=SIGRTMIN+3 \
-      --bind-ro=/nix/var/nix/store-fs/$INSTANCE:/nix/store \
+      ${optionalString cfg.privateStore ''--bind-ro=/nix/var/nix/store-fs/$INSTANCE:/nix/store''} \
+      ${
+        optionalString (!cfg.privateStore) ''
+          \
+             --bind-ro=/nix/store                      \
+             --bind-ro=/nix/var/nix/db                 \
+             --bind-ro=/nix/var/nix/daemon-socket      \
+             --bind="/nix/var/nix/profiles/per-container/$INSTANCE:/nix/var/nix/profiles" \
+             --bind="/nix/var/nix/gcroots/per-container/$INSTANCE:/nix/var/nix/gcroots" \            
+        ''
+      } \
       ${optionalString (!cfg.ephemeral) "--link-journal=try-guest"} \
       --setenv PRIVATE_NETWORK="$PRIVATE_NETWORK" \
       --setenv HOST_BRIDGE="$HOST_BRIDGE" \
@@ -216,8 +223,6 @@ let
   preStartScript = cfg: ''
     # Clean up existing machined registration and interfaces.
     machinectl terminate "$INSTANCE" 2> /dev/null || true
-
-    ${pkgs.fuse}/bin/fusermount -u "/nix/var/nix/store-fs/$INSTANCE" || true
 
     if [ -n "$HOST_ADDRESS" ]  || [ -n "$LOCAL_ADDRESS" ] ||
        [ -n "$HOST_ADDRESS6" ] || [ -n "$LOCAL_ADDRESS6" ]; then
@@ -486,6 +491,8 @@ let
     extraVeths = { };
     additionalCapabilities = [ ];
     ephemeral = false;
+    privateUsers = false;
+    privateStore = false;
     timeoutStartSec = "1min";
     allowedDevices = [ ];
     hostAddress = null;
@@ -682,6 +689,25 @@ in
                   on the host.  If this option is not set, then the
                   container shares the network interfaces of the host,
                   and can bind to any port on any interface.
+                '';
+              };
+
+              privateUsers = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  Whether to enable user namespaces.
+                  This is the same as passing `-U` to systemd-nspawn.
+                '';
+              };
+
+              privateStore = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  Wether to isolate /nix/store using nix-store-fs.
+                  This also disables access to the database and the daemon socket
+                  from within the container.
                 '';
               };
 
@@ -915,6 +941,40 @@ in
                 value = unit;
               }
             ]
+            ++ (mapAttrsToList (
+              name: cfg:
+              nameValuePair "nix-store-fs@${name}" (
+                if cfg.privateStore then
+                  (
+                    let
+                      item = builtins.elemAt (builtins.match ".*/([^/]+)" (toString cfg.path)) 0;
+                    in
+                    {
+                      #serviceConfig.Type = "simple";
+                      unitConfig.StopWhenUnneeded = true;
+                      script = ''
+                        PATH="$PATH:${pkgs.fuse}/bin"
+                        mkdir -p "/nix/var/nix/store-fs/${name}"
+                        exec ${nix-store-fs}/bin/nix-store-fs "${item}" "/nix/var/nix/store-fs/${name}"
+                      '';
+                      postStart = ''
+                        SYSTEM_PATH="/nix/var/nix/store-fs/${name}/${item}"
+                        for (( i = 0; i < 10; i++ )); do
+                            if [[ -e $SYSTEM_PATH ]]; then
+                                exit 0
+                            fi
+                            sleep 2
+                        done
+                        echo "Timed out waiting for $SYSTEM_PATH"
+                        exit 1
+                      '';
+                    }
+                  )
+                else
+                  null
+              )
+            ) config.containers)
+
             # declarative containers
             ++ (mapAttrsToList (
               name: cfg:
@@ -944,11 +1004,15 @@ in
                     );
                   environment.root =
                     if containerConfig.ephemeral then "/run/nixos-containers/%i" else "${stateDirectory}/%i";
+                  requires = if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else null;
                 }
                 // (optionalAttrs containerConfig.autoStart {
                   wantedBy = [ "machines.target" ];
                   wants = [ "network.target" ] ++ (map (i: "sys-subsystem-net-devices-${i}.device") cfg.interfaces);
-                  after = [ "network.target" ] ++ (map (i: "sys-subsystem-net-devices-${i}.device") cfg.interfaces);
+                  after =
+                    [ "network.target" ]
+                    ++ (map (i: "sys-subsystem-net-devices-${i}.device") cfg.interfaces)
+                    ++ (if cfg.privateStore then [ "nix-store-fs@${name}.service" ] else null);
                   restartTriggers = [
                     containerConfig.path
                     config.environment.etc."${configurationDirectoryName}/${name}.conf".source

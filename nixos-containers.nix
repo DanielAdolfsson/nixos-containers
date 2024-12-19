@@ -387,7 +387,11 @@ let
     d:
     let
       flagPrefix = if d.isReadOnly then " --bind-ro=" else " --bind=";
-      mountstr = if d.hostPath != null then "${d.hostPath}:${d.mountPoint}" else "${d.mountPoint}";
+      mountstr =
+        if d.hostPath != null then
+          "${d.hostPath}:${d.mountPoint}:idmap"
+        else
+          "${d.mountPoint}:${d.mountPoint}:idmap";
     in
     flagPrefix + mountstr;
 
